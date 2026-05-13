@@ -1,3 +1,7 @@
+Aluno: Guilherme Lins Guerra
+Matrícula: 01796536
+
+
 # 🖥️ PyOS - Simulador Educacional de Sistema Operacional
 
 ![Status](https://img.shields.io/badge/Status-Educacional-blue)
