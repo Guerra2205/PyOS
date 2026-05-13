@@ -1,155 +1,630 @@
 #imports
 import time
-import sys
 import random
+import copy
 
 # ==========================================
 # ESTRUTURAS DE DADOS DO KERNEL
 # ==========================================
 
-# Tabela global de processos (Nossa "RAM")
 tabela_processos = []
-pid_counter = 1000  # PIDs na vida real começam em 1000 
+
+MAX_PROCESSOS = 5
+
+pid_counter = 1000
+
+# Recursos para Semáforo / Deadlock
+recursos = {
+    "A": None,
+    "B": None
+}
+
+# Memória compartilhada (IPC)
+memoria_compartilhada = {}
+
 
 class PCB:
-    """Bloco Descritor de Processo (Process Control Block)"""
-    def __init__(self, nome):
+    """Bloco Descritor de Processo"""
+
+    def __init__(self, nome, prioridade=None):
+
         global pid_counter
+
         self.pid = pid_counter
         self.nome = nome
-        self.estado = "PRONTO"  # Estados possíveis: PRONTO, EXECUTANDO, TERMINADO
-        self.ciclos_restantes = random.randint(2, 6)  # Define o "peso" do processo (quantos ticks ele precisa)
+
+        self.estado = "PRONTO"
+
+        self.ciclos_restantes = random.randint(2, 6)
+
+        # 1 = alta | 2 = média | 3 = baixa
+        if prioridade is None:
+            self.prioridade = random.randint(1, 3)
+        else:
+            self.prioridade = prioridade
+
+        self.recurso = None
+
         pid_counter += 1
 
+
 # ==========================================
-# FUNÇÕES DO KERNEL E ESCALONADOR
+# BOOT
 # ==========================================
 
 def boot():
-    """Simula a inicialização do Sistema Operacional"""
-    print("Iniciando PyOS Kernel v1.0...")
+
+    print("Iniciando PyOS Kernel v2.0...")
     time.sleep(1)
+
     print("Carregando módulos de memória [OK]")
     time.sleep(0.5)
-    print("Iniciando escalonador de processos [OK]")
+
+    print("Iniciando escalonador [OK]")
     time.sleep(0.5)
-    print("Bem-vindo ao terminal. Digite 'help' para comandos.\n")
 
-def spawn_process(nome):
-    """Cria um novo processo e adiciona na tabela (RAM)"""
-    novo_processo = PCB(nome)
-    tabela_processos.append(novo_processo)
-    print(f"[Kernel] Processo '{nome}' criado com PID {novo_processo.pid}")
+    print("Iniciando sistema de IPC [OK]")
+    time.sleep(0.5)
 
-def escalonador_tick():
-    """Simula um ciclo (quantum) do processador executando a fila (Round Robin)"""
-    prontos = [p for p in tabela_processos if p.estado != "TERMINADO"]
-    
-    if not prontos:
-        print("[CPU] Ociosa (Idle). Nenhum processo na fila de prontos.")
-        return
+    print("\nBem-vindo ao PyOS.")
+    print("Digite 'help' para comandos.\n")
 
-    # Pega o primeiro processo da fila
-    processo_atual = prontos[0]
-    
-    # CHAVEAMENTO DE CONTEXTO: Entrando na CPU
-    processo_atual.estado = "EXECUTANDO"
-    print(f"\n[CPU] Executando PID {processo_atual.pid} ({processo_atual.nome})...")
-    time.sleep(1)  # Simula o tempo real da CPU processando a tarefa
-    
-    # Decrementa o trabalho necessário (simula que ele fez progresso)
-    processo_atual.ciclos_restantes -= 1
-    
-    # Verifica se o processo terminou seu trabalho
-    if processo_atual.ciclos_restantes <= 0:
-        processo_atual.estado = "TERMINADO"
-        print(f"[Kernel] Processo PID {processo_atual.pid} finalizou e liberou a memória.")
-        # Remove da tabela de processos (limpa a RAM)
-        tabela_processos.remove(processo_atual)
-    else:
-        # CHAVEAMENTO DE CONTEXTO: Saindo da CPU por preempção (acabou o tempo dele)
-        processo_atual.estado = "PRONTO"
-        # Tira do início da fila e coloca no final (Round Robin)
-        tabela_processos.remove(processo_atual)
-        tabela_processos.append(processo_atual)
-        print(f"[Kernel] Chaveamento de contexto. PID {processo_atual.pid} pausado e movido para o fim da fila.")
 
 # ==========================================
-# INTERFACE COM O USUÁRIO (SHELL)
+# PROCESSOS
+# ==========================================
+
+def spawn_process(nome):
+
+    if len(tabela_processos) >= MAX_PROCESSOS:
+
+        print("[Kernel] ERRO: Out of Memory!")
+        return
+
+    novo = PCB(nome)
+
+    tabela_processos.append(novo)
+
+    print(f"[Kernel] Processo '{nome}' criado com PID {novo.pid}")
+
+
+# ==========================================
+# ESCALONADOR
+# ==========================================
+
+def escalonador_tick():
+
+    prontos = [p for p in tabela_processos if p.estado == "PRONTO"]
+
+    if not prontos:
+
+        print("[CPU] Nenhum processo pronto.")
+        return
+
+    # PRIORIDADE
+    prontos.sort(key=lambda p: p.prioridade)
+
+    processo_atual = prontos[0]
+
+    processo_atual.estado = "EXECUTANDO"
+
+    print(
+        f"\n[CPU] Executando PID {processo_atual.pid} "
+        f"({processo_atual.nome}) "
+        f"[PRIORIDADE {processo_atual.prioridade}]"
+    )
+
+    time.sleep(1)
+
+    processo_atual.ciclos_restantes -= 1
+
+    if processo_atual.ciclos_restantes <= 0:
+
+        processo_atual.estado = "ZUMBI"
+
+        print(f"[Kernel] Processo PID {processo_atual.pid} virou ZUMBI.")
+
+    else:
+
+        processo_atual.estado = "PRONTO"
+
+        tabela_processos.remove(processo_atual)
+
+        tabela_processos.append(processo_atual)
+
+        print(f"[Kernel] Chaveamento de contexto do PID {processo_atual.pid}")
+
+
+# ==========================================
+# SEMÁFORO
+# ==========================================
+
+def lock_recurso(pid, recurso):
+
+    processo = None
+
+    for p in tabela_processos:
+
+        if p.pid == pid:
+            processo = p
+            break
+
+    if not processo:
+
+        print("PID não encontrado.")
+        return
+
+    if recurso not in recursos:
+
+        print("Recurso inválido.")
+        return
+
+    if recursos[recurso] is None:
+
+        recursos[recurso] = pid
+
+        processo.recurso = recurso
+
+        print(f"[Semáforo] PID {pid} bloqueou recurso {recurso}")
+
+    else:
+
+        processo.estado = "BLOQUEADO"
+
+        print(
+            f"[Semáforo] Recurso {recurso} ocupado. "
+            f"PID {pid} ficou BLOQUEADO."
+        )
+
+
+def unlock_recurso(pid):
+
+    for recurso, dono in recursos.items():
+
+        if dono == pid:
+
+            recursos[recurso] = None
+
+            for p in tabela_processos:
+
+                if p.pid == pid:
+                    p.recurso = None
+
+            print(f"[Semáforo] PID {pid} liberou recurso {recurso}")
+
+            return
+
+    print("Esse PID não possui recurso.")
+
+
+# ==========================================
+# DEADLOCK
+# ==========================================
+
+def detectar_deadlock():
+
+    dono_a = recursos["A"]
+    dono_b = recursos["B"]
+
+    if dono_a and dono_b:
+
+        proc_a = next((p for p in tabela_processos if p.pid == dono_a), None)
+        proc_b = next((p for p in tabela_processos if p.pid == dono_b), None)
+
+        if proc_a and proc_b:
+
+            if proc_a.estado == "BLOQUEADO" and proc_b.estado == "BLOQUEADO":
+
+                print("\n[DEADLOCK DETECTADO]")
+                print("Os processos entraram em espera circular.\n")
+                return
+
+    print("Nenhum deadlock detectado.")
+
+
+# ==========================================
+# IPC
+# ==========================================
+
+def escrever_memoria(pid, mensagem):
+
+    memoria_compartilhada[pid] = mensagem
+
+    print(f"[IPC] PID {pid} escreveu mensagem.")
+
+
+def ler_memoria(pid):
+
+    if pid in memoria_compartilhada:
+
+        print(f"[IPC] Mensagem: {memoria_compartilhada[pid]}")
+
+    else:
+
+        print("Nenhuma mensagem encontrada.")
+
+
+# ==========================================
+# SHELL
 # ==========================================
 
 def shell():
-    """O laço principal que aguarda comandos do usuário"""
+
     global tabela_processos
-    
+    global pid_counter
+
     while True:
+
         try:
-            # O Prompt do nosso SO
-            comando = input("root@pyos:~# ").strip().lower().split()
-            
-            # Evita erro se o usuário apertar Enter vazio
+
+            comando = input("root@pyos:~# ").strip().split()
+
             if not comando:
                 continue
-                
-            acao = comando[0]
-            
-            if acao == "exit":
-                print("Desligando o sistema...")
-                break
-                
-            elif acao == "help":
-                print("Comandos disponíveis:")
-                print("  spawn [nome] - Cria um novo processo")
-                print("  ps           - Lista os processos ativos")
-                print("  cpu          - Executa 1 ciclo do processador (Escalonador)")
-                print("  kill [PID]   - Encerra um processo à força")
-                print("  clear        - Limpa a tela")
-                print("  exit         - Desliga o sistema")
-                
-            elif acao == "clear":
-                print("\033[H\033[J", end="")  # Código ANSI para limpar terminal
-                
+
+            acao = comando[0].lower()
+
+            # ======================================
+            # HELP
+            # ======================================
+
+            if acao == "help":
+
+                print("\n======= COMANDOS =======\n")
+
+                print("spawn [nome]")
+                print("ps")
+                print("cpu")
+                print("run")
+                print("block [PID]")
+                print("unblock [PID]")
+                print("kill [PID]")
+                print("wait [PID]")
+                print("fork [PID]")
+
+                print("\n--- Semáforos ---")
+                print("lock [PID] [A/B]")
+                print("unlock [PID]")
+
+                print("\n--- IPC ---")
+                print("write [PID] [mensagem]")
+                print("read [PID]")
+
+                print("\n--- Outros ---")
+                print("deadlock")
+                print("clear")
+                print("exit\n")
+
+            # ======================================
+            # SPAWN
+            # ======================================
+
             elif acao == "spawn":
+
                 if len(comando) > 1:
+
                     spawn_process(comando[1])
+
                 else:
-                    print("Uso correto: spawn [nome_do_processo]")
-                    
+
+                    print("Uso correto: spawn [nome]")
+
+            # ======================================
+            # PS
+            # ======================================
+
             elif acao == "ps":
-                # Formatação em colunas para ficar parecido com o Linux
-                print(f"{'PID':<6} | {'NOME':<12} | {'ESTADO':<12} | {'CICLOS RESTANTES'}")
-                print("-" * 55)
+
+                print(
+                    f"\n{'PID':<6} | {'NOME':<10} | "
+                    f"{'ESTADO':<12} | {'PRIO':<5} | "
+                    f"{'CICLOS':<6} | {'RECURSO'}"
+                )
+
+                print("-" * 70)
+
                 for p in tabela_processos:
-                    print(f"{p.pid:<6} | {p.nome[:12]:<12} | {p.estado:<12} | {p.ciclos_restantes}")
+
+                    print(
+                        f"{p.pid:<6} | "
+                        f"{p.nome:<10} | "
+                        f"{p.estado:<12} | "
+                        f"{p.prioridade:<5} | "
+                        f"{p.ciclos_restantes:<6} | "
+                        f"{str(p.recurso)}"
+                    )
+
                 if not tabela_processos:
-                    print("Nenhum processo em execução.")
-                    
-            elif acao == "kill":
-                if len(comando) > 1:
-                    try:
-                        alvo = int(comando[1])
-                        # Recria a lista mantendo todos, exceto o alvo
-                        tabela_processos = [p for p in tabela_processos if p.pid != alvo]
-                        print(f"[Kernel] Sinal SIGKILL enviado. PID {alvo} destruído.")
-                    except ValueError:
-                        print("Erro: O PID deve ser um número inteiro.")
-                else:
-                    print("Uso correto: kill [PID]")
-                    
+
+                    print("Nenhum processo ativo.")
+
+            # ======================================
+            # CPU
+            # ======================================
+
             elif acao == "cpu":
+
                 escalonador_tick()
-                
+
+            # ======================================
+            # RUN
+            # ======================================
+
+            elif acao == "run":
+
+                print("\n[Kernel] Execução automática iniciada...\n")
+
+                while True:
+
+                    prontos = [
+                        p for p in tabela_processos
+                        if p.estado == "PRONTO"
+                    ]
+
+                    if not prontos:
+                        break
+
+                    escalonador_tick()
+
+                    time.sleep(0.5)
+
+                print("\n[Kernel] Execução encerrada.")
+
+            # ======================================
+            # BLOCK
+            # ======================================
+
+            elif acao == "block":
+
+                if len(comando) > 1:
+
+                    pid = int(comando[1])
+
+                    for p in tabela_processos:
+
+                        if p.pid == pid:
+
+                            p.estado = "BLOQUEADO"
+
+                            print(f"PID {pid} bloqueado.")
+
+                            break
+
+                else:
+
+                    print("Uso correto: block [PID]")
+
+            # ======================================
+            # UNBLOCK
+            # ======================================
+
+            elif acao == "unblock":
+
+                if len(comando) > 1:
+
+                    pid = int(comando[1])
+
+                    for p in tabela_processos:
+
+                        if p.pid == pid:
+
+                            p.estado = "PRONTO"
+
+                            print(f"PID {pid} desbloqueado.")
+
+                            break
+
+                else:
+
+                    print("Uso correto: unblock [PID]")
+
+            # ======================================
+            # KILL
+            # ======================================
+
+            elif acao == "kill":
+
+                if len(comando) > 1:
+
+                    pid = int(comando[1])
+
+                    antes = len(tabela_processos)
+
+                    tabela_processos = [
+                        p for p in tabela_processos
+                        if p.pid != pid
+                    ]
+
+                    if len(tabela_processos) < antes:
+
+                        print(f"PID {pid} destruído.")
+
+                    else:
+
+                        print("PID não encontrado.")
+
+                else:
+
+                    print("Uso correto: kill [PID]")
+
+            # ======================================
+            # WAIT (LIMPA ZUMBI)
+            # ======================================
+
+            elif acao == "wait":
+
+                if len(comando) > 1:
+
+                    pid = int(comando[1])
+
+                    for p in tabela_processos:
+
+                        if p.pid == pid and p.estado == "ZUMBI":
+
+                            tabela_processos.remove(p)
+
+                            print(f"PID {pid} removido da RAM.")
+
+                            break
+
+                    else:
+
+                        print("Zumbi não encontrado.")
+
+                else:
+
+                    print("Uso correto: wait [PID]")
+
+            # ======================================
+            # FORK
+            # ======================================
+
+            elif acao == "fork":
+
+                if len(comando) > 1:
+
+                    pid = int(comando[1])
+
+                    pai = next(
+                        (p for p in tabela_processos if p.pid == pid),
+                        None
+                    )
+
+                    if pai:
+
+                        filho = copy.deepcopy(pai)
+
+                        filho.pid = pid_counter
+
+                        pid_counter += 1
+
+                        filho.nome += "_clone"
+
+                        tabela_processos.append(filho)
+
+                        print(
+                            f"[fork] Processo clonado. "
+                            f"Novo PID: {filho.pid}"
+                        )
+
+                    else:
+
+                        print("PID não encontrado.")
+
+                else:
+
+                    print("Uso correto: fork [PID]")
+
+            # ======================================
+            # LOCK
+            # ======================================
+
+            elif acao == "lock":
+
+                if len(comando) > 2:
+
+                    pid = int(comando[1])
+
+                    recurso = comando[2].upper()
+
+                    lock_recurso(pid, recurso)
+
+                else:
+
+                    print("Uso correto: lock [PID] [A/B]")
+
+            # ======================================
+            # UNLOCK
+            # ======================================
+
+            elif acao == "unlock":
+
+                if len(comando) > 1:
+
+                    pid = int(comando[1])
+
+                    unlock_recurso(pid)
+
+                else:
+
+                    print("Uso correto: unlock [PID]")
+
+            # ======================================
+            # DEADLOCK
+            # ======================================
+
+            elif acao == "deadlock":
+
+                detectar_deadlock()
+
+            # ======================================
+            # IPC WRITE
+            # ======================================
+
+            elif acao == "write":
+
+                if len(comando) > 2:
+
+                    pid = int(comando[1])
+
+                    mensagem = " ".join(comando[2:])
+
+                    escrever_memoria(pid, mensagem)
+
+                else:
+
+                    print("Uso correto: write [PID] [mensagem]")
+
+            # ======================================
+            # IPC READ
+            # ======================================
+
+            elif acao == "read":
+
+                if len(comando) > 1:
+
+                    pid = int(comando[1])
+
+                    ler_memoria(pid)
+
+                else:
+
+                    print("Uso correto: read [PID]")
+
+            # ======================================
+            # CLEAR
+            # ======================================
+
+            elif acao == "clear":
+
+                print("\033[H\033[J", end="")
+
+            # ======================================
+            # EXIT
+            # ======================================
+
+            elif acao == "exit":
+
+                print("Desligando sistema...")
+                break
+
+            # ======================================
+            # INVÁLIDO
+            # ======================================
+
             else:
-                print(f"bash: {acao}: comando não encontrado. Digite 'help'.")
-                
-        # Intercepta o Ctrl+C para não "quebrar" o simulador com erro feio
+
+                print(f"bash: {acao}: comando não encontrado.")
+
         except KeyboardInterrupt:
-            print("\nPor favor, use 'exit' para sair do PyOS.")
 
-# ==========================================
-# INÍCIO DO SISTEMA
-# ==========================================
+            print("\nUse 'exit' para sair.")
 
+        except Exception as erro:
+
+            print(f"Erro: {erro}")
 if __name__ == "__main__":
+
     boot()
+
     shell()
